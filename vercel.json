@@ -1,0 +1,21 @@
+{
+  "builds": [
+    {
+      "src": "web/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    },
+    {
+      "src": "api/analyze.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": ["backend/**", "data/uber.xlsx"]
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/api/analyze", "dest": "/api/analyze.py" },
+    { "src": "/(.*)", "dest": "/web/dist/$1" }
+  ]
+}
+
