@@ -72,12 +72,18 @@ class handler(BaseHTTPRequestHandler):
             try:
                 intent = ic.classify_intent(question)
             except RuntimeError as e:
-                # Missing API key / package -- surface a clear config error
-                # rather than a generic 500 with a traceback.
                 self._send(500, {"error": f"Configuration error: {e}"})
                 return
             except ValueError as e:
                 self._send(422, {"error": f"Could not understand the question: {e}"})
+                return
+            except Exception as e:
+                import traceback
+                self._send(500, {
+                    "error": f"Intent classification failed: {type(e).__name__}: {e}",
+                    "traceback": traceback.format_exc(),
+                    "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                })
                 return
 
             if intent.clarification_needed:
