@@ -121,12 +121,13 @@ def classify_intent(question: str, api_key: str | None = None) -> Intent:
             "variable or pass api_key explicitly."
         )
 
-    http_client = httpx.Client(trust_env=False, timeout=60.0) if httpx else None
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.pop(var, None)
+
     client = anthropic.Anthropic(
         api_key=key,
         timeout=60.0,
         max_retries=2,
-        http_client=http_client,
     )
 
     response = client.messages.create(
