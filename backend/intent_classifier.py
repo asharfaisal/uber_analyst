@@ -21,8 +21,10 @@ from .intent_schema import Intent
 
 try:
     import anthropic
+    import httpx
 except ImportError:
     anthropic = None
+    httpx = None
 
 
 MODEL = "claude-sonnet-4-6"
@@ -119,7 +121,13 @@ def classify_intent(question: str, api_key: str | None = None) -> Intent:
             "variable or pass api_key explicitly."
         )
 
-    client = anthropic.Anthropic(api_key=key)
+    http_client = httpx.Client(trust_env=False, timeout=60.0) if httpx else None
+    client = anthropic.Anthropic(
+        api_key=key,
+        timeout=60.0,
+        max_retries=2,
+        http_client=http_client,
+    )
 
     response = client.messages.create(
         model=MODEL,
