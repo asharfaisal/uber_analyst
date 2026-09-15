@@ -189,7 +189,14 @@ def generate_narrative(
     if not key:
         raise RuntimeError("No Anthropic API key found (ANTHROPIC_API_KEY).")
 
-    client = anthropic.Anthropic(api_key=key)
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.pop(var, None)
+
+    client = anthropic.Anthropic(
+        api_key=key,
+        timeout=60.0,
+        max_retries=2,
+    )
 
     if formatted.chart_type == "none":
         data_payload = "No rows matched the applied filters."
