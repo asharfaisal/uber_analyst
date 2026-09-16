@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from backend import data_engine as de
 from backend import intent_classifier as ic
+from backend import rule_based_classifier as rbc
 from backend import query_planner as qp
 from backend import response_formatter as rf
 
@@ -69,22 +70,12 @@ class handler(BaseHTTPRequestHandler):
 
             df = _get_df()
 
+            used_classifier = "llm"
             try:
                 intent = ic.classify_intent(question)
-            except RuntimeError as e:
-                self._send(500, {"error": f"Configuration error: {e}"})
-                return
-            except ValueError as e:
-                self._send(422, {"error": f"Could not understand the question: {e}"})
-                return
-            except Exception as e:
-                import traceback
-                self._send(500, {
-                    "error": f"Intent classification failed: {type(e).__name__}: {e}",
-                    "traceback": traceback.format_exc(),
-                    "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
-                })
-                return
+            except Exception:
+                intent = rbc.classify_intent_rule_based(question)
+                used_classifier = "rule_based"
 
             if intent.clarification_needed:
                 self._send(200, {
@@ -103,7 +94,7 @@ class handler(BaseHTTPRequestHandler):
                 # data; never let it take down the whole response.
                 narrative = rf.generate_fallback_narrative(formatted, result.metadata)
 
-            self._send(200, {
+                self._send(200, {
                 "needs_clarification": False,
                 "narrative": narrative,
                 "chart_type": formatted.chart_type,
@@ -113,7 +104,8 @@ class handler(BaseHTTPRequestHandler):
                 "unit": formatted.unit,
                 "raw_summary": formatted.raw_summary,
                 "row_count": result.row_count,
-            })
+                "classifier_used": used_classifier,
+                })
 
         except Exception as e:  # noqa: BLE001 - last-resort safety net
             self._send(500, {"error": f"Unexpected server error: {e}"})

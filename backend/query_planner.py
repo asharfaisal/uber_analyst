@@ -62,8 +62,14 @@ def execute_intent(df: pd.DataFrame, intent: Intent) -> QueryResult:
     filtered = _apply_filters(df, intent)
     row_count = len(filtered)
 
+    effective_metric = intent.metric
+    if effective_metric is None and intent.intent_type in (
+        "top_n", "comparison", "time_series"
+    ):
+        effective_metric = "ride_count"
+
     metadata = {
-        "metric": intent.metric,
+        "metric": effective_metric,
         "dimension": intent.dimension,
         "grain": intent.grain,
         "filters_applied": _describe_filters(intent),
