@@ -2,7 +2,10 @@
 api/analyze.py
 
 Vercel Python serverless function. Single endpoint: POST /api/analyze
-Body: {"question": "<natural language question>"}
+Body: {
+  "question": "<natural language question>",
+  "history": [{"question": "...", "narrative": "..."}, ...]  // optional, for follow-ups
+}
 
 Response (success):
 {
@@ -14,7 +17,8 @@ Response (success):
   "values": [...],
   "unit": "₹" | "rides" | "km" | "stars" | null,
   "raw_summary": {...} | null,   // only for chart_type == "kpi_cards"
-  "row_count": <int>
+  "row_count": <int>,
+  "classifier_used": "llm" | "rule_based"
 }
 
 Response (needs clarification):
@@ -23,6 +27,12 @@ Response (needs clarification):
 The dataset is loaded once per warm serverless instance (module-level cache)
 rather than once per request, since re-parsing a 150k-row Excel file on
 every invocation would be far too slow for a chat-like experience.
+
+Conversation history is supplied by the frontend (it just replays the last
+few turns back to us -- we don't persist any server-side session state,
+which keeps this endpoint stateless and simple to scale). It's used only to
+resolve follow-up questions ("what about in August?") in both the intent
+classifier and the narrative generator.
 """
 
 import json
@@ -39,6 +49,8 @@ from backend import query_planner as qp
 from backend import response_formatter as rf
 
 _df_cache = None
+
+MAX_HISTORY_TURNS = 5  # how many past turns the frontend should send / we'll use
 
 
 def _get_df():
@@ -63,6 +75,8 @@ class handler(BaseHTTPRequestHandler):
             raw_body = self.rfile.read(length) if length else b"{}"
             body = json.loads(raw_body or b"{}")
             question = (body.get("question") or "").strip()
+            history = body.get("history") or []
+            history = history[-MAX_HISTORY_TURNS:] if isinstance(history, list) else []
 
             if not question:
                 self._send(400, {"error": "The 'question' field is required."})
@@ -70,9 +84,15 @@ class handler(BaseHTTPRequestHandler):
 
             df = _get_df()
 
+            # Try the Groq-powered classifier first (handles varied phrasing
+            # and follow-ups best); fall back to the free, deterministic
+            # keyword-based classifier if the API is unavailable for any
+            # reason (no key, no credits, network issue, rate limit). This
+            # means the app always works, and gets smarter whenever Groq
+            # access is available.
             used_classifier = "llm"
             try:
-                intent = ic.classify_intent(question)
+                intent = ic.classify_intent(question, conversation_history=history)
             except Exception:
                 intent = rbc.classify_intent_rule_based(question)
                 used_classifier = "rule_based"
@@ -88,13 +108,15 @@ class handler(BaseHTTPRequestHandler):
             formatted = rf.format_for_visualization(result, question)
 
             try:
-                narrative = rf.generate_narrative(question, formatted, result.metadata)
+                narrative = rf.generate_narrative(
+                    question, formatted, result.metadata, conversation_history=history
+                )
             except Exception:
                 # Narrative generation is a nice-to-have on top of correct
                 # data; never let it take down the whole response.
                 narrative = rf.generate_fallback_narrative(formatted, result.metadata)
 
-                self._send(200, {
+            self._send(200, {
                 "needs_clarification": False,
                 "narrative": narrative,
                 "chart_type": formatted.chart_type,
@@ -105,7 +127,7 @@ class handler(BaseHTTPRequestHandler):
                 "raw_summary": formatted.raw_summary,
                 "row_count": result.row_count,
                 "classifier_used": used_classifier,
-                })
+            })
 
         except Exception as e:  # noqa: BLE001 - last-resort safety net
             self._send(500, {"error": f"Unexpected server error: {e}"})

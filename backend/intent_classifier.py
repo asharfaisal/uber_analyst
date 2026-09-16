@@ -2,36 +2,38 @@
 intent_classifier.py
 
 Converts a natural-language question into a structured Intent (see
-intent_schema.py) using the Claude API. This is the only module in the
-system that talks to the LLM for the purpose of understanding the question
-(a separate call, in response_formatter.py, handles generating the final
-natural-language answer).
+intent_schema.py) using Groq's chat completions API (OpenAI-compatible,
+free tier). This is the only module in the system that talks to the LLM for
+the purpose of understanding the question (a separate call, in
+response_formatter.py, handles generating the final natural-language answer).
 
-Requires the ANTHROPIC_API_KEY environment variable to be set.
+Supports conversation history so follow-up questions like "what about in
+August?" or "and by revenue instead?" can be resolved using the context of
+the previous question -- the history is included in the prompt as plain
+text, not sent as separate chat turns, since we only want it to inform
+intent extraction, not have the model "chat" about past answers.
+
+Requires the GROQ_API_KEY environment variable to be set. Get a free key at
+https://console.groq.com/keys
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import date
+import re
 
 from . import constants as C
 from .intent_schema import Intent
 
 try:
-    import anthropic
-    import httpx
+    import groq
 except ImportError:
-    anthropic = None
-    httpx = None
+    groq = None
 
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-# Today's date is injected into the prompt so relative date phrases like
-# "last month" or "this quarter" resolve correctly regardless of when the
-# question is asked. The dataset itself covers all of 2025.
 DATASET_DATE_MIN = C.EXPECTED_DATE_MIN
 DATASET_DATE_MAX = C.EXPECTED_DATE_MAX
 
@@ -50,7 +52,14 @@ list memorized — pass through whatever location names the user mentions verbat
 - Metrics available for financial/rating fields ONLY exist for Completed and \
 Incomplete rides (cancelled rides have no Booking Value, Ride Distance, or ratings).
 
-OUTPUT SCHEMA (return ONLY this JSON, nothing else, no markdown fences):
+You may be given a short history of the previous question(s) and answer(s) in this \
+conversation. Use it ONLY to resolve follow-up questions that depend on context \
+(e.g. "what about in August?" after a question about vehicle types should reuse \
+"vehicle type" as the dimension; "and by revenue?" should keep the prior filters \
+but change the metric). If the current question is fully self-contained, ignore \
+the history.
+
+OUTPUT SCHEMA (return ONLY this JSON, nothing else, no markdown fences, no commentary):
 {{
   "intent_type": one of ["summary", "top_n", "comparison", "time_series", "distribution", "cancellation_reasons"],
   "metric": one of ["ride_count", "total_revenue", "avg_booking_value", "avg_ride_distance", "avg_driver_rating", "avg_customer_rating", "total_distance"] or null,
@@ -81,79 +90,75 @@ INTENT TYPE GUIDE:
 
 RULES:
 1. If the question is genuinely ambiguous (e.g. "show me the data" with no clear metric \
-or dimension), set clarification_needed=true and write a specific clarification_question. \
-Do not guess wildly.
+or dimension, and no resolvable history), set clarification_needed=true and write a \
+specific clarification_question. Do not guess wildly.
 2. Default metric to "ride_count" when the user asks about volume/popularity without \
 specifying revenue, distance, or ratings.
 3. Resolve month names to the year 2025 (the only year in the dataset) unless the user \
 specifies otherwise.
 4. Never invent location names or vehicle types not implied by the user's question.
-5. Return ONLY the JSON object. No prose, no markdown code fences.
+5. Return ONLY the JSON object. No prose, no markdown code fences, no commentary before or after.
 """
 
 
-def classify_intent(question: str, api_key: str | None = None) -> Intent:
+def classify_intent(
+    question: str,
+    conversation_history: list[dict] | None = None,
+    api_key: str | None = None,
+) -> Intent:
     """
     Classify a natural-language question into a structured Intent.
 
     Args:
         question: the user's raw question
-        api_key: Anthropic API key. Falls back to ANTHROPIC_API_KEY env var.
+        conversation_history: optional list of {"question": str, "narrative": str}
+            dicts from prior turns in this conversation, most recent last.
+            Used to resolve follow-up questions. Pass the last 3-5 turns at
+            most -- more than that adds cost without adding useful context.
+        api_key: Groq API key. Falls back to GROQ_API_KEY env var.
 
     Returns:
         Intent object (see intent_schema.py)
 
     Raises:
-        RuntimeError: if the anthropic package isn't installed or no API key
-            is available.
-        ValueError: if Claude's response isn't valid JSON matching the schema.
+        RuntimeError: if the groq package isn't installed or no API key is
+            available.
+        ValueError: if the model's response isn't valid JSON matching the schema.
     """
-    if anthropic is None:
+    if groq is None:
         raise RuntimeError(
-            "The 'anthropic' package is not installed. Run: "
-            "pip install anthropic --break-system-packages"
+            "The 'groq' package is not installed. Run: "
+            "pip install groq --break-system-packages"
         )
 
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    key = (api_key or os.environ.get("GROQ_API_KEY") or "").strip()
     if not key:
         raise RuntimeError(
-            "No Anthropic API key found. Set the ANTHROPIC_API_KEY environment "
+            "No Groq API key found. Set the GROQ_API_KEY environment "
             "variable or pass api_key explicitly."
         )
 
+    # Clear stray proxy env vars that can cause spurious connection errors
+    # in some serverless environments.
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         os.environ.pop(var, None)
 
-    client = anthropic.Anthropic(
-        api_key=key,
-        timeout=60.0,
-        max_retries=2,
-    )
+    client = groq.Groq(api_key=key, timeout=60.0, max_retries=2)
 
-    response = client.messages.create(
+    user_content = _build_user_message(question, conversation_history)
+
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": question}],
+        temperature=0,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
     )
 
-    raw_text = "".join(
-        block.text for block in response.content if block.type == "text"
-    ).strip()
-
-    # Defensive: strip markdown fences if the model added them despite instructions.
-    if raw_text.startswith("```"):
-        raw_text = raw_text.strip("`")
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
-        raw_text = raw_text.strip()
-
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Claude did not return valid JSON. Raw response: {raw_text!r}"
-        ) from e
+    raw_text = response.choices[0].message.content.strip()
+    parsed = _parse_json_response(raw_text)
 
     intent = Intent.from_dict(parsed)
     errors = intent.validate()
@@ -161,3 +166,45 @@ def classify_intent(question: str, api_key: str | None = None) -> Intent:
         raise ValueError(f"Intent failed validation: {errors}. Raw: {parsed!r}")
 
     return intent
+
+
+def _build_user_message(question: str, history: list[dict] | None) -> str:
+    if not history:
+        return question
+
+    lines = ["Previous conversation (most recent last):"]
+    for turn in history[-5:]:
+        lines.append(f"Q: {turn.get('question', '')}")
+        lines.append(f"A: {turn.get('narrative', '')}")
+    lines.append("")
+    lines.append(f"Current question: {question}")
+    return "\n".join(lines)
+
+
+def _parse_json_response(raw_text: str) -> dict:
+    """Defensively extract a JSON object from the model's response, in case
+    it added markdown fences or stray commentary despite instructions."""
+    text = raw_text.strip()
+
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: find the first {...} block in the text.
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Model did not return valid JSON. Raw response: {raw_text!r}"
+            ) from e
+
+    raise ValueError(f"Model did not return valid JSON. Raw response: {raw_text!r}")

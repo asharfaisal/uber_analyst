@@ -24,13 +24,13 @@ from typing import Any, Optional
 import pandas as pd
 
 try:
-    import anthropic
+    import groq
 except ImportError:
-    anthropic = None
+    groq = None
 
 from .query_planner import QueryResult
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 @dataclass
@@ -150,10 +150,11 @@ NARRATIVE_SYSTEM_PROMPT = """You are a business analyst writing a short, direct 
 answer to a question about Uber ride data (Delhi/NCR, full year 2025).
 
 You will be given:
-1. The user's original question
-2. The exact numbers that answer it (already computed — do not question or \
+1. Optionally, a short history of previous questions and answers in this conversation
+2. The user's current question
+3. The exact numbers that answer it (already computed — do not question or \
 recompute them)
-3. Metadata about filters that were applied
+4. Metadata about filters that were applied
 
 Write a 1-4 sentence answer that:
 - States the direct answer first
@@ -162,6 +163,9 @@ higher than the next vehicle type")
 - Uses the numbers EXACTLY as given — never round differently, never invent \
 figures not present in the data
 - Mentions applied filters naturally if they narrow the scope (e.g. "In August, ...")
+- If this is a follow-up question, write it so it reads naturally as a continuation \
+(e.g. "In that case, ..." or "For August specifically, ...") rather than repeating \
+context the user already knows
 - Is plain, confident business language — no hedging, no "it appears that"
 
 Do not describe the chart. Do not say "as you can see". Do not add a generic \
@@ -173,30 +177,27 @@ def generate_narrative(
     question: str,
     formatted: FormattedResponse,
     metadata: dict,
+    conversation_history: Optional[list] = None,
     api_key: Optional[str] = None,
 ) -> str:
     """
-    Generate a natural-language narrative answer using Claude, grounded
+    Generate a natural-language narrative answer using Groq, grounded
     strictly in the already-computed numbers (formatted.raw_summary or
-    formatted.labels/values). Claude never sees the raw dataset here.
+    formatted.labels/values). The model never sees the raw dataset here.
     """
-    if anthropic is None:
+    if groq is None:
         raise RuntimeError(
-            "The 'anthropic' package is not installed. Run: "
-            "pip install anthropic --break-system-packages"
+            "The 'groq' package is not installed. Run: "
+            "pip install groq --break-system-packages"
         )
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    key = (api_key or os.environ.get("GROQ_API_KEY") or "").strip()
     if not key:
-        raise RuntimeError("No Anthropic API key found (ANTHROPIC_API_KEY).")
+        raise RuntimeError("No Groq API key found (GROQ_API_KEY).")
 
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         os.environ.pop(var, None)
 
-    client = anthropic.Anthropic(
-        api_key=key,
-        timeout=60.0,
-        max_retries=2,
-    )
+    client = groq.Groq(api_key=key, timeout=60.0, max_retries=2)
 
     if formatted.chart_type == "none":
         data_payload = "No rows matched the applied filters."
@@ -205,23 +206,33 @@ def generate_narrative(
     else:
         data_payload = str(dict(zip(formatted.labels, formatted.values)))
 
+    history_block = ""
+    if conversation_history:
+        lines = ["Previous conversation (most recent last):"]
+        for turn in conversation_history[-3:]:
+            lines.append(f"Q: {turn.get('question', '')}")
+            lines.append(f"A: {turn.get('narrative', '')}")
+        history_block = "\n".join(lines) + "\n\n"
+
     user_message = (
-        f"Question: {question}\n\n"
+        f"{history_block}"
+        f"Current question: {question}\n\n"
         f"Computed data: {data_payload}\n\n"
         f"Unit: {formatted.unit or 'count'}\n"
         f"Filters applied: {metadata.get('filters_applied', {})}"
     )
 
-    response = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=300,
-        system=NARRATIVE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": NARRATIVE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
     )
 
-    return "".join(
-        block.text for block in response.content if block.type == "text"
-    ).strip()
+    return response.choices[0].message.content.strip()
 
 
 def generate_fallback_narrative(formatted: FormattedResponse, metadata: dict) -> str:

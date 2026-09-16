@@ -28,11 +28,25 @@ export default function App() {
     setInput('')
     setLoading(true)
 
+    // Build lightweight history from prior turns: just question + narrative
+    // text, which is all the backend needs to resolve follow-up questions.
+    const history = []
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i]
+      if (m.role === 'assistant' && m.result && i > 0) {
+        const prevUserMsg = messages[i - 1]
+        if (prevUserMsg.role === 'user') {
+          history.push({ question: prevUserMsg.text, narrative: m.result.narrative })
+        }
+      }
+    }
+    const recentHistory = history.slice(-5)
+
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, history: recentHistory }),
       })
       const data = await res.json()
 
