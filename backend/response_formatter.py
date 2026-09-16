@@ -65,6 +65,8 @@ _METRIC_LABELS = {
     "total_distance": "Total distance",
     "avg_driver_rating": "Average driver rating",
     "avg_customer_rating": "Average customer rating",
+    "unique_customers": "Total customers",
+    "completion_rate": "Completion rate",
 }
 
 
@@ -235,6 +237,18 @@ def generate_narrative(
     return response.choices[0].message.content.strip()
 
 
+_SUMMARY_METRIC_KEYS = {
+    "ride_count": ("total_rides", "rides", "{:,.0f}"),
+    "total_revenue": ("total_revenue", "₹", "₹{:,.0f}"),
+    "avg_booking_value": ("avg_booking_value", "₹", "₹{:,.2f}"),
+    "avg_ride_distance": ("avg_ride_distance", "km", "{:.1f} km"),
+    "avg_driver_rating": ("avg_driver_rating", "stars", "{:.2f} ★"),
+    "avg_customer_rating": ("avg_customer_rating", "stars", "{:.2f} ★"),
+    "unique_customers": ("unique_customers", "customers", "{:,.0f}"),
+    "completion_rate": ("completion_rate", "%", "{:.1f}%"),
+}
+
+
 def generate_fallback_narrative(formatted: FormattedResponse, metadata: dict) -> str:
     """
     Deterministic, non-LLM narrative used when no API key is available or
@@ -245,6 +259,18 @@ def generate_fallback_narrative(formatted: FormattedResponse, metadata: dict) ->
 
     if formatted.raw_summary is not None:
         s = formatted.raw_summary
+        requested_metric = metadata.get("metric")
+
+        # If the question asked about one specific stat (e.g. "avg ride
+        # distance", "total customers"), answer with just that number
+        # rather than always repeating the same generic 3-stat overview --
+        # otherwise every single-metric question looks identical.
+        if requested_metric in _SUMMARY_METRIC_KEYS:
+            summary_key, _unit, fmt = _SUMMARY_METRIC_KEYS[requested_metric]
+            if summary_key in s and s[summary_key] is not None:
+                label = _METRIC_LABELS.get(requested_metric, requested_metric.replace("_", " "))
+                return f"{label}: {fmt.format(s[summary_key])}"
+
         return (
             f"{s['total_rides']:,} total rides, {s['completion_rate']}% completed, "
             f"₹{s['total_revenue']:,.0f} in revenue from completed rides."

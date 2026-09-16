@@ -38,6 +38,9 @@ _METRIC_KEYWORDS = [
     (["distance", "km", "kilometer"], "avg_ride_distance"),
     (["driver rating", "driver ratings"], "avg_driver_rating"),
     (["customer rating", "customer ratings"], "avg_customer_rating"),
+    (["how many customers", "unique customers", "total customers",
+      "number of customers", "customer count"], "unique_customers"),
+    (["completion rate", "completed rate"], "completion_rate"),
 ]
 
 _DIMENSION_KEYWORDS = [

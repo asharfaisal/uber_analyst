@@ -59,6 +59,8 @@ VALID_METRICS = [
     "avg_driver_rating",
     "avg_customer_rating",
     "total_distance",
+    "unique_customers",   # summary-only: not aggregatable by dimension
+    "completion_rate",    # summary-only: not aggregatable by dimension
 ]
 
 VALID_GRAINS = ["day", "week", "month", "quarter", "day_of_week", "hour"]
