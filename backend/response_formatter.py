@@ -33,6 +33,18 @@ from .query_planner import QueryResult
 MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
+_SUMMARY_METRIC_KEYS = {
+    "ride_count": ("total_rides", "rides", "{:,.0f}"),
+    "total_revenue": ("total_revenue", "₹", "₹{:,.0f}"),
+    "avg_booking_value": ("avg_booking_value", "₹", "₹{:,.2f}"),
+    "avg_ride_distance": ("avg_ride_distance", "km", "{:.1f} km"),
+    "avg_driver_rating": ("avg_driver_rating", "stars", "{:.2f} ★"),
+    "avg_customer_rating": ("avg_customer_rating", "stars", "{:.2f} ★"),
+    "unique_customers": ("unique_customers", "customers", "{:,.0f}"),
+    "completion_rate": ("completion_rate", "%", "{:.1f}%"),
+}
+
+
 @dataclass
 class FormattedResponse:
     chart_type: str  # "bar" | "line" | "kpi_cards" | "table" | "none"
@@ -41,6 +53,9 @@ class FormattedResponse:
     values: list
     unit: Optional[str]  # e.g. "₹", "rides", "km", "stars" — for axis/label formatting
     raw_summary: Optional[dict]  # only populated for intent_type == "summary"
+    highlighted_key: Optional[str] = None  # which raw_summary key to visually
+    # emphasize, when the question asked about one specific stat rather than
+    # a general overview (e.g. "avg ride distance" -> "avg_ride_distance")
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +118,13 @@ def format_for_visualization(result: QueryResult, question: str = "") -> Formatt
 
 
 def _format_summary(result: QueryResult, metric_label: str, unit: Optional[str]) -> FormattedResponse:
+    metric = result.metadata.get("metric")
+    highlighted_key = None
+    if metric in _SUMMARY_METRIC_KEYS:
+        summary_key, _unit, _fmt = _SUMMARY_METRIC_KEYS[metric]
+        if summary_key in (result.data or {}):
+            highlighted_key = summary_key
+
     return FormattedResponse(
         chart_type="kpi_cards",
         title="Overview",
@@ -110,6 +132,7 @@ def _format_summary(result: QueryResult, metric_label: str, unit: Optional[str])
         values=[],
         unit=None,
         raw_summary=result.data,
+        highlighted_key=highlighted_key,
     )
 
 
@@ -235,18 +258,6 @@ def generate_narrative(
     )
 
     return response.choices[0].message.content.strip()
-
-
-_SUMMARY_METRIC_KEYS = {
-    "ride_count": ("total_rides", "rides", "{:,.0f}"),
-    "total_revenue": ("total_revenue", "₹", "₹{:,.0f}"),
-    "avg_booking_value": ("avg_booking_value", "₹", "₹{:,.2f}"),
-    "avg_ride_distance": ("avg_ride_distance", "km", "{:.1f} km"),
-    "avg_driver_rating": ("avg_driver_rating", "stars", "{:.2f} ★"),
-    "avg_customer_rating": ("avg_customer_rating", "stars", "{:.2f} ★"),
-    "unique_customers": ("unique_customers", "customers", "{:,.0f}"),
-    "completion_rate": ("completion_rate", "%", "{:.1f}%"),
-}
 
 
 def generate_fallback_narrative(formatted: FormattedResponse, metadata: dict) -> str:

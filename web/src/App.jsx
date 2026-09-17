@@ -102,7 +102,7 @@ export default function App() {
                 <p className="narrative">{msg.result.narrative}</p>
 
                 {msg.result.chart_type === 'kpi_cards' && (
-                  <KpiCards summary={msg.result.raw_summary} />
+                  <KpiCards summary={msg.result.raw_summary} highlightKey={msg.result.highlighted_key} />
                 )}
                 {msg.result.chart_type === 'bar' && (
                   <>

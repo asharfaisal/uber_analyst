@@ -125,6 +125,7 @@ class handler(BaseHTTPRequestHandler):
                 "values": formatted.values,
                 "unit": formatted.unit,
                 "raw_summary": formatted.raw_summary,
+                "highlighted_key": formatted.highlighted_key,
                 "row_count": result.row_count,
                 "classifier_used": used_classifier,
             })

@@ -135,11 +135,30 @@ body {
   gap: 12px;
 }
 
+.kpi-grid-single {
+  grid-template-columns: 1fr;
+  max-width: 260px;
+}
+
 .kpi-card {
   background: #E1F5EE;
   border-radius: 8px;
   padding: 12px;
   text-align: center;
+}
+
+.kpi-card-highlight {
+  background: #1D9E75;
+  padding: 20px 12px;
+}
+
+.kpi-card-highlight .kpi-value {
+  color: white;
+  font-size: 26px;
+}
+
+.kpi-card-highlight .kpi-label {
+  color: #DFF5EC;
 }
 
 .kpi-value {
