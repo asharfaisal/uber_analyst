@@ -1,11 +1,9 @@
 """
 query_planner.py
 
-Takes a validated Intent (see intent_schema.py) and executes it against the
-data engine, returning a structured result plus metadata about what was run.
-This is the layer that decides *which* data_engine functions to call and in
-*what order* — it contains no LLM calls and is fully deterministic, which is
-what makes it unit-testable without hitting the Claude API.
+Takes a validated Intent and executes it against the data engine,
+deterministically -- no LLM calls here, which is what makes it fully
+unit-testable without hitting any API.
 """
 
 from __future__ import annotations
@@ -22,14 +20,13 @@ from .intent_schema import Intent
 @dataclass
 class QueryResult:
     intent_type: str
-    data: Any  # pd.Series, pd.DataFrame, or dict depending on intent_type
-    row_count: int  # number of underlying rows the query executed against
+    data: Any
+    row_count: int
     is_empty: bool
-    metadata: dict  # echoes back metric/dimension/filters used, for the formatter
+    metadata: dict
 
 
 def _apply_filters(df: pd.DataFrame, intent: Intent) -> pd.DataFrame:
-    """Apply every filter present on the intent, in a fixed, predictable order."""
     f = intent.filters
     result = df
 
@@ -48,13 +45,6 @@ def _apply_filters(df: pd.DataFrame, intent: Intent) -> pd.DataFrame:
 
 
 def execute_intent(df: pd.DataFrame, intent: Intent) -> QueryResult:
-    """
-    Execute a validated Intent against the dataset.
-
-    Raises:
-        ValueError: if the intent fails validation (should have been caught
-            earlier, but this is a defensive second check).
-    """
     errors = intent.validate()
     if errors:
         raise ValueError(f"Cannot execute invalid intent: {errors}")
@@ -62,13 +52,19 @@ def execute_intent(df: pd.DataFrame, intent: Intent) -> QueryResult:
     filtered = _apply_filters(df, intent)
     row_count = len(filtered)
 
+    # Resolve the effective metric (accounting for the same defaulting the
+    # handlers below apply) so metadata/formatting downstream sees the real
+    # metric used, not just whatever the intent happened to specify. This
+    # matters for unit labels ("rides" vs nothing) on every count-shaped
+    # intent type, not just top_n.
     effective_metric = intent.metric
     if effective_metric is None and intent.intent_type in (
-        "top_n", "comparison", "time_series"
+        "top_n", "comparison", "time_series", "distribution", "cancellation_reasons"
     ):
         effective_metric = "ride_count"
 
     metadata = {
+        "intent_type": intent.intent_type,
         "metric": effective_metric,
         "dimension": intent.dimension,
         "grain": intent.grain,
@@ -105,10 +101,6 @@ def execute_intent(df: pd.DataFrame, intent: Intent) -> QueryResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# Per-intent handlers
-# ---------------------------------------------------------------------------
-
 def _run_summary(df: pd.DataFrame, intent: Intent) -> dict:
     return de.get_summary(df)
 
@@ -134,7 +126,6 @@ def _run_distribution(df: pd.DataFrame, intent: Intent) -> pd.Series:
     field = intent.dimension or intent.metric
     if field is None:
         raise ValueError("distribution intent requires a dimension or metric field")
-    # Map metric name to actual column name if needed
     field = _METRIC_TO_COLUMN.get(field, field)
     return de.get_distribution(df, field)
 
@@ -142,10 +133,6 @@ def _run_distribution(df: pd.DataFrame, intent: Intent) -> pd.Series:
 def _run_cancellation_reasons(df: pd.DataFrame, intent: Intent) -> pd.Series:
     return de.get_cancellation_reasons(df, by=intent.cancellation_by)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 _METRIC_TO_COLUMN = {
     "total_revenue": "Booking Value",
@@ -157,10 +144,7 @@ _METRIC_TO_COLUMN = {
 }
 
 
-def _infer_comparison_dimension(df: pd.DataFrame, values: list[str]) -> str:
-    """If the intent didn't specify which column the comparison_values belong
-    to, infer it by checking which categorical column actually contains
-    those values."""
+def _infer_comparison_dimension(df: pd.DataFrame, values: list) -> str:
     from . import constants as C
 
     candidate_columns = [
@@ -179,7 +163,6 @@ def _infer_comparison_dimension(df: pd.DataFrame, values: list[str]) -> str:
 
 
 def _describe_filters(intent: Intent) -> dict:
-    """Human-readable echo of applied filters, for use in response formatting."""
     f = intent.filters
     described = {}
     if f.date_start or f.date_end:

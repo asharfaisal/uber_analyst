@@ -2,20 +2,13 @@
 rule_based_classifier.py
 
 A deterministic, keyword-based intent classifier — no LLM, no API cost.
-Used as the primary classifier when no Anthropic API credit is available,
-or as an automatic fallback if the Claude-powered classifier fails for any
-reason (rate limit, billing, network).
-
-This will never be as flexible as the Claude classifier for oddly-phrased
-questions, but it reliably handles direct, clearly-worded questions about
-the dataset's known vehicle types, payment methods, statuses, and metrics
-— which covers most realistic usage of a demo/project like this one.
+Serves as an automatic fallback if the LLM-powered classifier fails for any
+reason (no key, no credits, network issue, rate limit).
 """
 
 from __future__ import annotations
 
 import re
-from datetime import date
 
 from . import constants as C
 from .intent_schema import Intent, Filters
@@ -62,12 +55,6 @@ _GRAIN_KEYWORDS = [
 
 
 def classify_intent_rule_based(question: str) -> Intent:
-    """
-    Classify a question using keyword matching. Always returns a valid,
-    executable Intent (never raises) — if nothing specific matches, it
-    falls back to a "summary" intent so the user still gets an answer
-    rather than an error.
-    """
     q = question.lower().strip()
 
     intent_type = _detect_intent_type(q)
@@ -79,16 +66,12 @@ def classify_intent_rule_based(question: str) -> Intent:
     cancellation_by = _detect_cancellation_by(q) if intent_type == "cancellation_reasons" else None
     filters = _detect_filters(q)
 
-    # Comparison needs a dimension too, for the planner to know which
-    # column the comparison_values belong to (it can also infer this later).
     if intent_type == "comparison" and not comparison_values:
-        # Couldn't find specific values to compare -> fall back to top_n
-        # on whatever dimension was detected, which is still a useful answer.
         intent_type = "top_n"
         top_n = 10
 
     if intent_type == "top_n" and dimension is None:
-        dimension = C.COL_VEHICLE_TYPE  # sensible default for "most popular" questions
+        dimension = C.COL_VEHICLE_TYPE
 
     if intent_type == "distribution" and dimension is None and metric is None:
         dimension = C.COL_VEHICLE_TYPE
@@ -108,8 +91,11 @@ def classify_intent_rule_based(question: str) -> Intent:
 
 
 def _detect_intent_type(q: str) -> str:
-    if any(kw in q for kw in ["why", "reason", "cancellation reason", "cancel"]) and \
-       any(kw in q for kw in ["cancel", "reason"]):
+    # Only classify as "why did cancellations happen" if the question
+    # actually asks for a reason -- "cancel" alone (e.g. "trend of
+    # cancellations") should NOT trigger this, or every cancellation-
+    # related question gets misrouted away from what was actually asked.
+    if any(kw in q for kw in ["why", "reason"]) and "cancel" in q:
         return "cancellation_reasons"
     if any(kw in q for kw in [" vs ", " versus ", "compare"]):
         return "comparison"
@@ -125,18 +111,17 @@ def _detect_intent_type(q: str) -> str:
     return "summary"
 
 
-def _detect_metric(q: str) -> str | None:
+def _detect_metric(q: str):
     for keywords, metric in _METRIC_KEYWORDS:
         if any(kw in q for kw in keywords):
             return metric
     return None
 
 
-def _detect_dimension(q: str) -> str | None:
+def _detect_dimension(q: str):
     for keywords, dimension in _DIMENSION_KEYWORDS:
         if any(kw in q for kw in keywords):
             return dimension
-    # Try direct vehicle-type name matches (e.g. "which is more popular, Auto or Bike")
     for vt in C.VEHICLE_TYPES:
         if vt.lower() in q:
             return C.COL_VEHICLE_TYPE
@@ -150,7 +135,7 @@ def _detect_grain(q: str) -> str:
     for keywords, grain in _GRAIN_KEYWORDS:
         if any(kw in q for kw in keywords):
             return grain
-    return "month"  # sensible default for any unqualified "trend" question
+    return "month"
 
 
 def _detect_top_n(q: str) -> int:
@@ -160,7 +145,7 @@ def _detect_top_n(q: str) -> int:
     return 10
 
 
-def _detect_comparison_values(q: str) -> list[str] | None:
+def _detect_comparison_values(q: str):
     found = [vt for vt in C.VEHICLE_TYPES if vt.lower() in q]
     if len(found) >= 2:
         return found
@@ -182,22 +167,18 @@ def _detect_cancellation_by(q: str) -> str:
 def _detect_filters(q: str) -> Filters:
     filters = Filters()
 
-    # Vehicle type filter (only if not already used as the dimension/comparison)
     matched_vehicles = [vt for vt in C.VEHICLE_TYPES if vt.lower() in q]
     if matched_vehicles and len(matched_vehicles) == 1:
         filters.vehicle_types = matched_vehicles
 
-    # Payment method filter
     matched_payments = [pm for pm in C.PAYMENT_METHODS if pm.lower() in q]
     if matched_payments and len(matched_payments) == 1:
         filters.payment_methods = matched_payments
 
-    # Status filter
     matched_statuses = [s for s in C.ALL_BOOKING_STATUSES if s.lower() in q]
     if matched_statuses and len(matched_statuses) == 1:
         filters.statuses = matched_statuses
 
-    # Month filter -> resolves to a date range within 2025 (the only year present)
     for month_name, month_num in MONTH_NAMES.items():
         if month_name in q:
             days = _DAYS_IN_MONTH_2025[month_num]
