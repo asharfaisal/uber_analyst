@@ -19,12 +19,10 @@ export default function LineChart({ labels, values, unit }) {
 
   const pathD = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ')
 
-  // Show every label if few, else thin them out to avoid crowding
   const labelStep = Math.ceil(labels.length / 8)
 
   return (
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Line chart">
-      {/* Axis line */}
       <line
         x1={padding.left}
         y1={padding.top + chartHeight}
@@ -33,13 +31,12 @@ export default function LineChart({ labels, values, unit }) {
         stroke="#B4B2A9"
         strokeWidth="0.5"
       />
-      {/* Trend line */}
       <path d={pathD} fill="none" stroke="#1D9E75" strokeWidth="2" />
-      {/* Points */}
       {points.map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r="3" fill="#1D9E75" />
+        <circle key={i} cx={x} cy={y} r="3" fill="#1D9E75">
+          <title>{`${labels[i]}: ${values[i]}${unit ? ' ' + unit : ''}`}</title>
+        </circle>
       ))}
-      {/* X labels */}
       {labels.map((label, i) =>
         i % labelStep === 0 ? (
           <text
@@ -50,11 +47,10 @@ export default function LineChart({ labels, values, unit }) {
             fontSize="11"
             fill="#5f5e5a"
           >
-            {String(label).slice(0, 8)}
+            {truncateLabel(String(label))}
           </text>
         ) : null
       )}
-      {/* Y axis min/max */}
       <text x={padding.left - 8} y={padding.top} textAnchor="end" fontSize="11" fill="#5f5e5a">
         {formatValue(maxValue, unit)}
       </text>
@@ -69,6 +65,14 @@ export default function LineChart({ labels, values, unit }) {
       </text>
     </svg>
   )
+}
+
+// Truncate on a word/character boundary that reads as an intentional
+// abbreviation rather than a cut-off word -- "September" -> "Sep", not
+// "Septembe". Full text is still available via the point's <title> tooltip.
+function truncateLabel(label) {
+  if (label.length <= 8) return label
+  return label.slice(0, 3)
 }
 
 function formatValue(value, unit) {

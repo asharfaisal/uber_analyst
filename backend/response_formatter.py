@@ -136,13 +136,18 @@ You will be given:
 Write a 1-4 sentence answer that:
 - States the direct answer first
 - If comparing multiple values, states ALL of them, not just the top one
+- If the data has many points (e.g. a 12-month trend, an hourly breakdown), \
+DO NOT list every single value — summarize the pattern instead (highest/lowest \
+point, overall shape, any standout month/hour) in 2-3 sentences
 - Adds one relevant insight or comparison if the data supports it
 - Uses the numbers EXACTLY as given — never round differently, never invent figures
 - Mentions applied filters naturally if they narrow the scope
 - If this is a follow-up question, write it so it reads naturally as a continuation
 - Is plain, confident business language — no hedging
 
-Do not describe the chart. Do not say "as you can see". Just answer the question.
+Do not describe the chart. Do not say "as you can see". Just answer the question. \
+Keep it concise — the person can already see the full chart, your job is to add \
+insight, not transcribe every number in it.
 """
 
 
@@ -187,7 +192,7 @@ def generate_narrative(
     )
 
     response = client.chat.completions.create(
-        model=MODEL, max_tokens=300, temperature=0.3,
+        model=MODEL, max_tokens=400, temperature=0.3,
         messages=[
             {"role": "system", "content": NARRATIVE_SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
