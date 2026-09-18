@@ -17,7 +17,7 @@ except ImportError:
 
 from .query_planner import QueryResult
 
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 _METRIC_UNITS = {
     "ride_count": "rides",

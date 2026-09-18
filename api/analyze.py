@@ -1,10 +1,6 @@
 """
 api/analyze.py — Vercel Python serverless function.
 POST /api/analyze  { "question": str, "history": [{"question","narrative"}] }
-
-TEMPORARY: this version surfaces the real exception from the Groq call
-instead of silently falling back, so we can diagnose why classifier_used
-keeps coming back "rule_based". Revert to silent fallback once fixed.
 """
 
 import json
@@ -54,17 +50,9 @@ class handler(BaseHTTPRequestHandler):
             df = _get_df()
 
             used_classifier = "llm"
-            llm_error = None
             try:
                 intent = ic.classify_intent(question, conversation_history=history)
-            except Exception as e:
-                import traceback
-                llm_error = {
-                    "type": type(e).__name__,
-                    "message": str(e),
-                    "traceback": traceback.format_exc(),
-                    "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),
-                }
+            except Exception:
                 intent = rbc.classify_intent_rule_based(question)
                 used_classifier = "rule_based"
 
@@ -85,7 +73,7 @@ class handler(BaseHTTPRequestHandler):
             except Exception:
                 narrative = rf.generate_fallback_narrative(formatted, result.metadata)
 
-            response_payload = {
+            self._send(200, {
                 "needs_clarification": False,
                 "narrative": narrative,
                 "chart_type": formatted.chart_type,
@@ -97,11 +85,7 @@ class handler(BaseHTTPRequestHandler):
                 "highlighted_key": formatted.highlighted_key,
                 "row_count": result.row_count,
                 "classifier_used": used_classifier,
-            }
-            if llm_error:
-                response_payload["_debug_llm_error"] = llm_error
-
-            self._send(200, response_payload)
+            })
 
         except Exception as e:  # noqa: BLE001
             self._send(500, {"error": f"Unexpected server error: {e}"})
