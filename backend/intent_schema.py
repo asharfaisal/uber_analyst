@@ -1,38 +1,8 @@
 """
 intent_schema.py
 
-Defines the structured intent format that the Intent Classifier produces and
-the Query Planner consumes. Keeping this as an explicit schema (rather than
-an ad-hoc dict shape scattered across files) makes it possible to validate
-Claude's output and to unit-test the planner with hand-written intents that
-never touch the API.
-
-INTENT SHAPE (as JSON / dict):
-{
-    "intent_type": "summary" | "top_n" | "comparison" | "time_series" |
-                    "distribution" | "cancellation_reasons",
-    "metric": "ride_count" | "total_revenue" | "avg_booking_value" |
-              "avg_ride_distance" | "avg_driver_rating" |
-              "avg_customer_rating" | "total_distance" | null,
-    "dimension": "<column name>" | null,
-    "grain": "day" | "week" | "month" | "quarter" | "day_of_week" | "hour" | null,
-    "top_n": <int> | null,
-    "comparison_values": [<str>, ...] | null,
-    "cancellation_by": "customer" | "driver" | null,
-    "filters": {
-        "date_range": {"start": "YYYY-MM-DD" | null, "end": "YYYY-MM-DD" | null} | null,
-        "statuses": [<str>, ...] | null,
-        "vehicle_types": [<str>, ...] | null,
-        "pickup_locations": [<str>, ...] | null,
-        "drop_locations": [<str>, ...] | null,
-        "payment_methods": [<str>, ...] | null
-    },
-    "clarification_needed": <bool>,
-    "clarification_question": <str> | null
-}
-
-Only the fields relevant to a given intent_type need to be non-null; the
-planner ignores irrelevant fields.
+Defines the structured intent format shared between the classifier(s) and
+the query planner.
 """
 
 from __future__ import annotations
@@ -75,6 +45,36 @@ VALID_DIMENSIONS = [
 ]
 
 
+_DIMENSION_ALIASES = {
+    "vehicle_type": C.COL_VEHICLE_TYPE, "vehicletype": C.COL_VEHICLE_TYPE,
+    "vehicle": C.COL_VEHICLE_TYPE, "car_type": C.COL_VEHICLE_TYPE,
+    "pickup_location": C.COL_PICKUP_LOCATION, "pickuplocation": C.COL_PICKUP_LOCATION,
+    "pickup": C.COL_PICKUP_LOCATION,
+    "drop_location": C.COL_DROP_LOCATION, "droplocation": C.COL_DROP_LOCATION,
+    "drop": C.COL_DROP_LOCATION, "destination": C.COL_DROP_LOCATION,
+    "payment_method": C.COL_PAYMENT_METHOD, "paymentmethod": C.COL_PAYMENT_METHOD,
+    "payment": C.COL_PAYMENT_METHOD,
+    "booking_status": C.COL_BOOKING_STATUS, "bookingstatus": C.COL_BOOKING_STATUS,
+    "status": C.COL_BOOKING_STATUS,
+    "customer_id": C.COL_CUSTOMER_ID, "customerid": C.COL_CUSTOMER_ID,
+    "customer": C.COL_CUSTOMER_ID,
+}
+
+
+def _normalize_dimension(dim):
+    """LLMs frequently return a dimension as snake_case ('vehicle_type')
+    despite the prompt asking for the exact column name ('Vehicle Type'),
+    since that mirrors the snake_case convention used for `metric`. Rather
+    than relying on the model to always format this exactly right, map
+    common variants to the real column name here."""
+    if dim is None:
+        return None
+    if dim in VALID_DIMENSIONS:
+        return dim
+    key = str(dim).strip().lower().replace(" ", "_")
+    return _DIMENSION_ALIASES.get(key, dim)
+
+
 @dataclass
 class Filters:
     date_start: Optional[str] = None
@@ -101,7 +101,6 @@ class Intent:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Intent":
-        """Build an Intent from a raw dict (e.g. parsed JSON from Claude)."""
         filters_dict = d.get("filters") or {}
         date_range = filters_dict.get("date_range") or {}
         filters = Filters(
@@ -116,7 +115,7 @@ class Intent:
         return cls(
             intent_type=d["intent_type"],
             metric=d.get("metric"),
-            dimension=d.get("dimension"),
+            dimension=_normalize_dimension(d.get("dimension")),
             grain=d.get("grain"),
             top_n=d.get("top_n"),
             comparison_values=d.get("comparison_values"),
@@ -126,9 +125,7 @@ class Intent:
             clarification_question=d.get("clarification_question"),
         )
 
-    def validate(self) -> list[str]:
-        """Return a list of validation errors (empty list = valid). The
-        planner should refuse to execute an Intent with errors."""
+    def validate(self) -> list:
         errors = []
         if self.intent_type not in VALID_INTENT_TYPES:
             errors.append(f"Invalid intent_type: {self.intent_type}")
