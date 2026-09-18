@@ -1,38 +1,10 @@
 """
-api/analyze.py
+api/analyze.py — Vercel Python serverless function.
+POST /api/analyze  { "question": str, "history": [{"question","narrative"}] }
 
-Vercel Python serverless function. Single endpoint: POST /api/analyze
-Body: {
-  "question": "<natural language question>",
-  "history": [{"question": "...", "narrative": "..."}, ...]  // optional, for follow-ups
-}
-
-Response (success):
-{
-  "needs_clarification": false,
-  "narrative": "...",
-  "chart_type": "bar" | "line" | "kpi_cards" | "none",
-  "title": "...",
-  "labels": [...],
-  "values": [...],
-  "unit": "₹" | "rides" | "km" | "stars" | null,
-  "raw_summary": {...} | null,   // only for chart_type == "kpi_cards"
-  "row_count": <int>,
-  "classifier_used": "llm" | "rule_based"
-}
-
-Response (needs clarification):
-{ "needs_clarification": true, "clarification_question": "..." }
-
-The dataset is loaded once per warm serverless instance (module-level cache)
-rather than once per request, since re-parsing a 150k-row Excel file on
-every invocation would be far too slow for a chat-like experience.
-
-Conversation history is supplied by the frontend (it just replays the last
-few turns back to us -- we don't persist any server-side session state,
-which keeps this endpoint stateless and simple to scale). It's used only to
-resolve follow-up questions ("what about in August?") in both the intent
-classifier and the narrative generator.
+TEMPORARY: this version surfaces the real exception from the Groq call
+instead of silently falling back, so we can diagnose why classifier_used
+keeps coming back "rule_based". Revert to silent fallback once fixed.
 """
 
 import json
@@ -49,12 +21,10 @@ from backend import query_planner as qp
 from backend import response_formatter as rf
 
 _df_cache = None
-
-MAX_HISTORY_TURNS = 5  # how many past turns the frontend should send / we'll use
+MAX_HISTORY_TURNS = 5
 
 
 def _get_df():
-    """Load and cache the dataset for the lifetime of this warm instance."""
     global _df_cache
     if _df_cache is None:
         data_path = os.path.join(os.path.dirname(__file__), "..", "data", "uber.xlsx")
@@ -64,7 +34,6 @@ def _get_df():
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        # CORS preflight
         self.send_response(204)
         self._cors_headers()
         self.end_headers()
@@ -84,16 +53,18 @@ class handler(BaseHTTPRequestHandler):
 
             df = _get_df()
 
-            # Try the Groq-powered classifier first (handles varied phrasing
-            # and follow-ups best); fall back to the free, deterministic
-            # keyword-based classifier if the API is unavailable for any
-            # reason (no key, no credits, network issue, rate limit). This
-            # means the app always works, and gets smarter whenever Groq
-            # access is available.
             used_classifier = "llm"
+            llm_error = None
             try:
                 intent = ic.classify_intent(question, conversation_history=history)
-            except Exception:
+            except Exception as e:
+                import traceback
+                llm_error = {
+                    "type": type(e).__name__,
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                    "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),
+                }
                 intent = rbc.classify_intent_rule_based(question)
                 used_classifier = "rule_based"
 
@@ -112,11 +83,9 @@ class handler(BaseHTTPRequestHandler):
                     question, formatted, result.metadata, conversation_history=history
                 )
             except Exception:
-                # Narrative generation is a nice-to-have on top of correct
-                # data; never let it take down the whole response.
                 narrative = rf.generate_fallback_narrative(formatted, result.metadata)
 
-            self._send(200, {
+            response_payload = {
                 "needs_clarification": False,
                 "narrative": narrative,
                 "chart_type": formatted.chart_type,
@@ -128,9 +97,13 @@ class handler(BaseHTTPRequestHandler):
                 "highlighted_key": formatted.highlighted_key,
                 "row_count": result.row_count,
                 "classifier_used": used_classifier,
-            })
+            }
+            if llm_error:
+                response_payload["_debug_llm_error"] = llm_error
 
-        except Exception as e:  # noqa: BLE001 - last-resort safety net
+            self._send(200, response_payload)
+
+        except Exception as e:  # noqa: BLE001
             self._send(500, {"error": f"Unexpected server error: {e}"})
 
     def _cors_headers(self):
