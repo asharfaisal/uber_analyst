@@ -12,16 +12,14 @@ export default function KpiCards({ summary, highlightKey }) {
     { key: 'unique_customers', label: 'Total customers', value: summary.unique_customers?.toLocaleString() },
   ]
 
-  // When the question asked about one specific stat, show only that card
-  // (full-width, emphasized) instead of the whole grid.
   if (highlightKey) {
     const match = cards.find((c) => c.key === highlightKey)
     if (match) {
       return (
-        <div className="kpi-grid kpi-grid-single">
-          <div className="kpi-card kpi-card-highlight" key={match.key}>
-            <div className="kpi-value">{match.value}</div>
-            <div className="kpi-label">{match.label}</div>
+        <div className="max-w-[220px]">
+          <div className="rounded-xl p-5" style={{ backgroundColor: '#8BCF00' }}>
+            <div className="text-2xl font-semibold" style={{ color: '#111111' }}>{match.value}</div>
+            <div className="text-xs mt-1 font-medium" style={{ color: 'rgba(17,17,17,0.7)' }}>{match.label}</div>
           </div>
         </div>
       )
@@ -29,13 +27,13 @@ export default function KpiCards({ summary, highlightKey }) {
   }
 
   return (
-    <div className="kpi-grid">
+    <div className="grid grid-cols-3 gap-3">
       {cards
         .filter((c) => c.key !== 'unique_customers' && c.key !== 'avg_customer_rating')
         .map((c) => (
-          <div className="kpi-card" key={c.key}>
-            <div className="kpi-value">{c.value}</div>
-            <div className="kpi-label">{c.label}</div>
+          <div key={c.key} className="rounded-xl p-4 bg-[#F5F5F3] border border-[#E5E5E2]">
+            <div className="text-lg font-semibold" style={{ color: '#171717' }}>{c.value}</div>
+            <div className="text-[11px] mt-1" style={{ color: '#6B6B6B' }}>{c.label}</div>
           </div>
         ))}
     </div>

@@ -1,58 +1,44 @@
+import { BarChart as RBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+
+const GREEN = '#8BCF00'
+
 export default function BarChart({ labels, values, unit }) {
   if (!labels?.length) return null
 
-  const width = 640
-  const barHeight = 32
-  const gap = 12
-  const labelWidth = 160
-  const chartAreaWidth = width - labelWidth - 70
-  const maxValue = Math.max(...values, 1)
-  const height = labels.length * (barHeight + gap) + gap
+  const data = labels.map((label, i) => ({ name: label, value: values[i] }))
 
   return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Bar chart">
-      {labels.map((label, i) => {
-        const y = gap + i * (barHeight + gap)
-        const barWidth = (values[i] / maxValue) * chartAreaWidth
-        return (
-          <g key={label}>
-            <text
-              x={labelWidth - 10}
-              y={y + barHeight / 2}
-              textAnchor="end"
-              dominantBaseline="central"
-              fontSize="13"
-              fill="#3d3d3a"
-            >
-              {label.length > 20 ? label.slice(0, 18) + '…' : label}
-            </text>
-            <rect
-              x={labelWidth}
-              y={y}
-              width={Math.max(barWidth, 2)}
-              height={barHeight}
-              rx="4"
-              fill="#1D9E75"
-            />
-            <text
-              x={labelWidth + barWidth + 8}
-              y={y + barHeight / 2}
-              dominantBaseline="central"
-              fontSize="12"
-              fill="#5f5e5a"
-            >
-              {formatValue(values[i], unit)}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
+    <div style={{ width: '100%', height: Math.max(labels.length * 44, 180) }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <RBarChart data={data} layout="vertical" margin={{ top: 0, right: 30, left: 8, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E5E5E2" />
+          <XAxis type="number" tick={{ fontSize: 11, fill: '#6B6B6B' }} axisLine={false} tickLine={false} />
+          <YAxis
+            type="category"
+            dataKey="name"
+            width={110}
+            tick={{ fontSize: 12, fill: '#171717' }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            formatter={(v) => [formatValue(v, unit), '']}
+            contentStyle={{ borderRadius: 8, border: '1px solid #E5E5E2', fontSize: 12 }}
+          />
+          <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={28}>
+            {data.map((_, i) => (
+              <Cell key={i} fill={i === 0 ? GREEN : '#B7E38A'} />
+            ))}
+          </Bar>
+        </RBarChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
 function formatValue(value, unit) {
-  const rounded = Number.isInteger(value) ? value : value.toFixed(2)
-  const formatted = rounded.toLocaleString()
+  const num = Number(value)
+  const formatted = Number.isInteger(num) ? num.toLocaleString() : num.toFixed(2)
   if (unit === '₹') return `₹${formatted}`
   if (unit) return `${formatted} ${unit}`
   return formatted

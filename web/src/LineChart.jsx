@@ -1,84 +1,33 @@
+import { AreaChart as RAreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+
+const GREEN = '#8BCF00'
+
 export default function LineChart({ labels, values, unit }) {
   if (!labels?.length) return null
 
-  const width = 640
-  const height = 260
-  const padding = { top: 20, right: 20, bottom: 40, left: 60 }
-  const chartWidth = width - padding.left - padding.right
-  const chartHeight = height - padding.top - padding.bottom
-  const baselineY = padding.top + chartHeight
-
-  const maxValue = Math.max(...values, 1)
-  const minValue = Math.min(...values, 0)
-  const range = maxValue - minValue || 1
-
-  const points = values.map((v, i) => {
-    const x = padding.left + (i / Math.max(values.length - 1, 1)) * chartWidth
-    const y = padding.top + chartHeight - ((v - minValue) / range) * chartHeight
-    return [x, y]
-  })
-
-  const lineD = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ')
-
-  // Area fill: trace the line, then drop straight down to the baseline at
-  // the last point, run back along the baseline to the first point's x,
-  // and close -- fills the region under the curve.
-  const firstX = points[0][0]
-  const lastX = points[points.length - 1][0]
-  const areaD = `${lineD} L ${lastX} ${baselineY} L ${firstX} ${baselineY} Z`
-
-  const labelStep = Math.ceil(labels.length / 8)
-  const gradientId = 'lineChartAreaGradient'
+  const data = labels.map((label, i) => ({ name: truncateLabel(String(label)), value: values[i] }))
 
   return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Area chart">
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#1D9E75" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#1D9E75" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-
-      <line
-        x1={padding.left}
-        y1={baselineY}
-        x2={padding.left + chartWidth}
-        y2={baselineY}
-        stroke="#B4B2A9"
-        strokeWidth="0.5"
-      />
-
-      <path d={areaD} fill={`url(#${gradientId})`} stroke="none" />
-      <path d={lineD} fill="none" stroke="#1D9E75" strokeWidth="2" />
-
-      {points.map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r="3" fill="#1D9E75">
-          <title>{`${labels[i]}: ${values[i]}${unit ? ' ' + unit : ''}`}</title>
-        </circle>
-      ))}
-
-      {labels.map((label, i) =>
-        i % labelStep === 0 ? (
-          <text
-            key={label}
-            x={points[i][0]}
-            y={height - 15}
-            textAnchor="middle"
-            fontSize="11"
-            fill="#5f5e5a"
-          >
-            {truncateLabel(String(label))}
-          </text>
-        ) : null
-      )}
-
-      <text x={padding.left - 8} y={padding.top} textAnchor="end" fontSize="11" fill="#5f5e5a">
-        {formatValue(maxValue, unit)}
-      </text>
-      <text x={padding.left - 8} y={baselineY} textAnchor="end" fontSize="11" fill="#5f5e5a">
-        {formatValue(minValue, unit)}
-      </text>
-    </svg>
+    <div style={{ width: '100%', height: 240 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <RAreaChart data={data} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={GREEN} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={GREEN} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E2" />
+          <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6B6B6B' }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 11, fill: '#6B6B6B' }} axisLine={false} tickLine={false} width={60} />
+          <Tooltip
+            formatter={(v) => [formatValue(v, unit), '']}
+            contentStyle={{ borderRadius: 8, border: '1px solid #E5E5E2', fontSize: 12 }}
+          />
+          <Area type="monotone" dataKey="value" stroke={GREEN} strokeWidth={2} fill="url(#areaFill)" dot={{ r: 3, fill: GREEN }} />
+        </RAreaChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -88,8 +37,8 @@ function truncateLabel(label) {
 }
 
 function formatValue(value, unit) {
-  const rounded = Number.isInteger(value) ? value : value.toFixed(1)
-  const formatted = rounded.toLocaleString()
+  const num = Number(value)
+  const formatted = Number.isInteger(num) ? num.toLocaleString() : num.toFixed(1)
   if (unit === '₹') return `₹${formatted}`
   if (unit) return `${formatted} ${unit}`
   return formatted
